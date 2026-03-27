@@ -2,20 +2,26 @@ from fastapi import APIRouter, Body, HTTPException, Header
 from pydantic import BaseModel
 from hashlib import sha256
 import uuid
-
+import redis
+from app.config import redis_settings
 
 router = APIRouter()
 
 users = {}
-tokens = {}
 
+redis_client = redis.Redis(
+    host=redis_settings.host,
+    port=redis_settings.port,
+    password=redis_settings.password,
+    db=redis_settings.db,
+    decode_responses=True
+)
 
 class User(BaseModel):
     username: str
     password: bytes
     mail: str
     age_of_birth: int
-
 
 class RegisterInput(BaseModel):
     username: str
@@ -33,12 +39,8 @@ async def register_post(input: RegisterInput = Body()) -> dict[str, RegisterOutp
     if input.username in users:
         raise HTTPException(status_code=409, detail="This username is already taken")
     hash_password = input.username + input.password
-    print("Hash password (X): " + hash_password)
     hashed_password = sha256(hash_password.encode()).digest()
-    print("Hashed password (Y): " + str(hashed_password.hex()))
-    # f(X) -> Y
-    # For the same X, we always get the same Y
-    # It's theoretically impossible to go from Y -> X
+    
     new_user = User(
         username=input.username,
         password=hashed_password,
@@ -53,27 +55,24 @@ async def register_post(input: RegisterInput = Body()) -> dict[str, RegisterOutp
     )
     return {"new_user": output}
 
-
 class LoginInput(BaseModel):
     username: str
     password: str
 
 @router.post("/login")
-async def healthcheck(input: LoginInput = Body()) -> dict[str, str]:
+async def login_post(input: LoginInput = Body()) -> dict[str, str]:
     if input.username not in users:
         raise HTTPException(status_code=404, detail="User not found")
     hashed_stored_password = users[input.username].password
     hash_password = input.username + input.password
     hashed_input_password = sha256(hash_password.encode()).digest()
+    
     if hashed_stored_password == hashed_input_password:
         random_id = str(uuid.uuid4())
-        while random_id in tokens:
-            random_id = str(uuid.uuid4())
-        tokens[random_id] = input.username
+        redis_client.setex(name=random_id, time=3600, value=input.username)
         return {"auth": random_id}
     else:
         raise HTTPException(status_code=403, detail="Password is not correct")
-
 
 class IntrospectOutput(BaseModel):
     username: str
@@ -82,9 +81,10 @@ class IntrospectOutput(BaseModel):
 
 @router.get("/introspect")
 async def introspect_get(auth: str = Header()) -> IntrospectOutput:
-    if auth not in tokens:
+    current_username = redis_client.get(auth)
+    if not current_username:
         raise HTTPException(status_code=403, detail="Forbidden")
-    current_username = tokens[auth]
+    
     user = users[current_username]
     return IntrospectOutput(
         username=user.username,
@@ -92,10 +92,9 @@ async def introspect_get(auth: str = Header()) -> IntrospectOutput:
         age_of_birth=user.age_of_birth,
     )
 
-
 @router.delete("/logout")
-async def healthcheck(auth: str = Header()) -> dict[str, str]:
-    if auth not in tokens:
+async def logout_delete(auth: str = Header()) -> dict[str, str]:
+    if not redis_client.get(auth):
         raise HTTPException(status_code=403, detail="Forbidden")
-    del tokens[auth]
+    redis_client.delete(auth)
     return {"status": "ok"}
