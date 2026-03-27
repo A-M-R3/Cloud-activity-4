@@ -8,3 +8,4 @@ pydantic_settings==2.0.0
 tortoise-orm==0.19.3
 aerich==0.6.3
 asyncpg==0.28.0
+redis

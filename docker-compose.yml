@@ -10,7 +10,7 @@ services:
     depends_on:
       - postgres
       - redis
-      - minio
+      - minio-server
     volumes:
       - type: bind
         source: .
@@ -20,14 +20,27 @@ services:
     networks:
       - carlemany-net
 
+  postgres:
+    image: postgres:15-alpine
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${PSQL_DB_DATABASE}
+      POSTGRES_USER: ${PSQL_DB_USERNAME}
+      POSTGRES_PASSWORD: ${PSQL_DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - carlemany-net
+
   redis:
     image: redis:7.2.4
     hostname: redis-cache
     container_name: redis-cache
     restart: on-failure
-    command: redis-server
-    environment:
-      - ALLOW_EMPTY_PASSWORD=yes
+    command: redis-server --requirepass ${REDIS_PASSWORD}
     ports:
       - "6379:6379"
     networks:
@@ -43,6 +56,8 @@ services:
       - MINIO_ROOT_USER=minio
       - MINIO_ROOT_PASSWORD=minio123
     restart: always
+    volumes:
+      - minio_data:/data
     networks:
       - carlemany-net
 
@@ -53,33 +68,11 @@ services:
     entrypoint: >
       /bin/sh -c "
       /usr/bin/mc alias set myminio http://minio-server:9000 minio minio123;
-      /usr/bin/mc mb myminio/backend-carlemany-s3-bucket;
-      /usr/bin/mc anonymous set download myminio/backend-carlemany-s3-bucket;
-      /usr/bin/mc policy set public myminio/backend-carlemany-s3-bucket;
+      /usr/bin/mc mb myminio/carlemany-bucket;
+      /usr/bin/mc anonymous set download myminio/carlemany-bucket;
+      /usr/bin/mc policy set public myminio/carlemany-bucket;
       exit 0;
       "
-    networks:
-      - carlemany-net
-
-  postgres:
-    image: postgres:13.4-alpine3.14
-    environment:
-      - POSTGRES_DB=${PSQL_DB_DATABASE}
-      - POSTGRES_USER=${PSQL_DB_USERNAME}
-      - POSTGRES_PASSWORD=${PSQL_DB_PASSWORD}
-    env_file:
-     - .env
-    volumes:
-      - type: volume
-        source: carlemany-backend-data
-        target: /var/lib/postgresql/data
-    healthcheck:
-      test: pg_isready -d ${PSQL_DB_DATABASE} -U ${PSQL_DB_USERNAME}
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    ports:
-      - "5432:5432"
     networks:
       - carlemany-net
 
@@ -140,7 +133,7 @@ services:
         read_only: true
     entrypoint: sh -c "black --config .black --check --diff ."
 
-  test: &test
+  test:
     image: carlemany-backend-dev:latest
     env_file:
      - .env
@@ -150,15 +143,15 @@ services:
         target: /carlemany-backend
     networks:
       - carlemany-net
-    entrypoint: pytest --maxfail=10
-
-  test-cov:
-    <<: *test
-    entrypoint: pytest --maxfail=10 --cov --cov-report=term --cov-report=html --junitxml=tests/test-results/junit.xml
-
+    depends_on:
+      - postgres
+      - redis
+    entrypoint: pytest
 
 networks:
   carlemany-net:
+    driver: bridge
 
 volumes:
-  carlemany-backend-data:
+  postgres_data:
+  minio_data:
