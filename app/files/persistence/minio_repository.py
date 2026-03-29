@@ -1,8 +1,7 @@
 from minio import Minio
-from app.files.domain.interfaces import FileStorageInterface
 from app.config import minio_settings
 
-class MinioFileStorageService(FileStorageInterface):
+class MinioRepository:
     def __init__(self):
         self.client = Minio(
             minio_settings.endpoint,
@@ -12,30 +11,11 @@ class MinioFileStorageService(FileStorageInterface):
         )
         self.bucket_name = minio_settings.bucket_name
 
-    async def put_file(self, local_path: str, remote_identifier: str):
-        """Upload a file to storage"""
-        self.client.fput_object(
-            bucket_name=self.bucket_name, 
-            object_name=remote_identifier, 
-            file_path=local_path
-        )
-        return remote_identifier
+    def upload_file(self, local_path: str, remote_path: str):
+        self.client.fput_object(self.bucket_name, remote_path, local_path)
 
-    async def get_file(self, remote_path: str, local_folder: str):
-        """Download a file from storage"""
-        filename = remote_path.split("/")[-1]
-        local_path = f"{local_folder}/{filename}"
-        
-        self.client.fget_object(
-            bucket_name=self.bucket_name, 
-            object_name=remote_path, 
-            file_path=local_path
-        )
-        return local_path
+    def download_file(self, remote_path: str, local_path: str):
+        self.client.fget_object(self.bucket_name, remote_path, local_path)
 
-    async def remove_file(self, remote_identifier: str):
-        """Delete a file from storage"""
-        self.client.remove_object(
-            bucket_name=self.bucket_name, 
-            object_name=remote_identifier
-        )
+    def delete_file(self, remote_path: str):
+        self.client.remove_object(self.bucket_name, remote_path)

@@ -3,11 +3,11 @@ import httpx
 import uuid
 from pypdf import PdfMerger
 import os
-from minio import Minio
 
-from fastapi import APIRouter, Header, HTTPException, Body, File, UploadFile
+from fastapi import APIRouter, Header, HTTPException, Body, File, UploadFile, Depends
 from pydantic import BaseModel
-from app.config import minio_settings
+from app.files.dependency_injection.dependencies import get_minio_repository
+from app.files.persistence.minio_repository import MinioRepository
 
 router = APIRouter()
 
@@ -24,14 +24,6 @@ class FileBusinesObject(BaseModel):
 
 id_counter = 0
 files_database = {}
-
-minio_client = Minio(
-    minio_settings.endpoint,
-    access_key=minio_settings.access_key,
-    secret_key=minio_settings.secret_key,
-    secure=minio_settings.secure
-)
-BUCKET_NAME = minio_settings.bucket_name
 
 async def introspect(token: str) -> User:
     url = "http://localhost:8000/introspect"
@@ -58,7 +50,7 @@ class PostFilesMerge(BaseModel):
     file_id_2: int
 
 @router.post("/merge")
-async def merge_files(token: str = Header(alias="auth"), input: PostFilesMerge = Body()) -> dict[str, str]:
+async def merge_files(token: str = Header(alias="auth"), input: PostFilesMerge = Body(), minio_repo: MinioRepository = Depends(get_minio_repository)) -> dict[str, str]:
     user = await introspect(token=token)
     file_1 = check_file_ownership(input.file_id_1, user)
     file_2 = check_file_ownership(input.file_id_2, user)
@@ -70,8 +62,8 @@ async def merge_files(token: str = Header(alias="auth"), input: PostFilesMerge =
     temp_2 = f"/tmp/temp_2_{uuid.uuid4()}.pdf"
     merged_local_path = f"/tmp/merged_{uuid.uuid4()}.pdf"
     
-    minio_client.fget_object(BUCKET_NAME, file_path_1, temp_1)
-    minio_client.fget_object(BUCKET_NAME, file_path_2, temp_2)
+    minio_repo.download_file(file_path_1, temp_1)
+    minio_repo.download_file(file_path_2, temp_2)
     
     merger = PdfMerger()
     merger.append(temp_1)
@@ -83,7 +75,7 @@ async def merge_files(token: str = Header(alias="auth"), input: PostFilesMerge =
     fila_path_name_2 = file_path_2.split("/")[-1].split(".")[0]
     merged_remote_name = f"files/{file_path_name_1}_{fila_path_name_2}.pdf"
     
-    minio_client.fput_object(BUCKET_NAME, merged_remote_name, merged_local_path)
+    minio_repo.upload_file(merged_local_path, merged_remote_name)
     
     os.remove(temp_1)
     os.remove(temp_2)
@@ -123,7 +115,7 @@ async def get_files_id(id: int, token: str = Header(alias="auth")) -> FileBusine
     return files_database[id]
 
 @router.post("/{id}")
-async def post_files_id_upload(id: int, token: str = Header(alias="auth"), file_content: UploadFile = File()) -> dict[str, str]:
+async def post_files_id_upload(id: int, token: str = Header(alias="auth"), file_content: UploadFile = File(), minio_repo: MinioRepository = Depends(get_minio_repository)) -> dict[str, str]:
     user = await introspect(token=token)
     file = check_file_ownership(id, user)
     
@@ -135,7 +127,7 @@ async def post_files_id_upload(id: int, token: str = Header(alias="auth"), file_
         while chunk := await file_content.read(8192):
             buffer.write(chunk)
             
-    minio_client.fput_object(BUCKET_NAME, remote_path, temp_path)
+    minio_repo.upload_file(temp_path, remote_path)
     
     os.remove(temp_path)
     
@@ -143,12 +135,12 @@ async def post_files_id_upload(id: int, token: str = Header(alias="auth"), file_
     return {"status": "uploaded"}
 
 @router.delete("/{id}")
-async def delete_files_id(id: int, token: str = Header(alias="auth")) -> dict[str, str]:
+async def delete_files_id(id: int, token: str = Header(alias="auth"), minio_repo: MinioRepository = Depends(get_minio_repository)) -> dict[str, str]:
     user = await introspect(token=token)
     file = check_file_ownership(id, user)
     
     if file.path:
-        minio_client.remove_object(BUCKET_NAME, file.path)
+        minio_repo.delete_file(file.path)
         
     del(files_database[id])
     return {"status": "deleted"}

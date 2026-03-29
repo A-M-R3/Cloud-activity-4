@@ -1,21 +1,13 @@
-from fastapi import APIRouter, Body, HTTPException, Header
+from fastapi import APIRouter, Body, HTTPException, Header, Depends
 from pydantic import BaseModel
 from hashlib import sha256
 import uuid
-import redis
-from app.config import redis_settings
+from app.authentication.dependency_injection.dependencies import get_redis_repository
+from app.authentication.persistence.redis_repository import RedisRepository
 
 router = APIRouter()
 
 users = {}
-
-redis_client = redis.Redis(
-    host=redis_settings.host,
-    port=redis_settings.port,
-    password=redis_settings.password,
-    db=redis_settings.db,
-    decode_responses=True
-)
 
 class User(BaseModel):
     username: str
@@ -60,7 +52,7 @@ class LoginInput(BaseModel):
     password: str
 
 @router.post("/login")
-async def login_post(input: LoginInput = Body()) -> dict[str, str]:
+async def login_post(input: LoginInput = Body(), redis_repo: RedisRepository = Depends(get_redis_repository)) -> dict[str, str]:
     if input.username not in users:
         raise HTTPException(status_code=404, detail="User not found")
     hashed_stored_password = users[input.username].password
@@ -69,7 +61,7 @@ async def login_post(input: LoginInput = Body()) -> dict[str, str]:
     
     if hashed_stored_password == hashed_input_password:
         random_id = str(uuid.uuid4())
-        redis_client.setex(name=random_id, time=3600, value=input.username)
+        redis_repo.set_token(token=random_id, username=input.username)
         return {"auth": random_id}
     else:
         raise HTTPException(status_code=403, detail="Password is not correct")
@@ -80,8 +72,8 @@ class IntrospectOutput(BaseModel):
     age_of_birth: int
 
 @router.get("/introspect")
-async def introspect_get(auth: str = Header()) -> IntrospectOutput:
-    current_username = redis_client.get(auth)
+async def introspect_get(auth: str = Header(), redis_repo: RedisRepository = Depends(get_redis_repository)) -> IntrospectOutput:
+    current_username = redis_repo.get_username(auth)
     if not current_username:
         raise HTTPException(status_code=403, detail="Forbidden")
     
@@ -93,8 +85,8 @@ async def introspect_get(auth: str = Header()) -> IntrospectOutput:
     )
 
 @router.delete("/logout")
-async def logout_delete(auth: str = Header()) -> dict[str, str]:
-    if not redis_client.get(auth):
+async def logout_delete(auth: str = Header(), redis_repo: RedisRepository = Depends(get_redis_repository)) -> dict[str, str]:
+    if not redis_repo.get_username(auth):
         raise HTTPException(status_code=403, detail="Forbidden")
-    redis_client.delete(auth)
+    redis_repo.delete_token(auth)
     return {"status": "ok"}

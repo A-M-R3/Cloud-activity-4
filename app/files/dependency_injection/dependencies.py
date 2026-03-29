@@ -1,14 +1,6 @@
-from app.files.persistence.minio_repository import MinioFileStorageService
-from app.files.domain.controllers import (
-    UploadFileContentController,
-    DownloadFileController,
-    DeleteFileController,
-    MergeFilesController
-)
+from app.files.persistence.minio_repository import MinioRepository
 
-file_storage_service = MinioFileStorageService()
+minio_repository = MinioRepository()
 
-upload_file_controller = UploadFileContentController(file_storage_service)
-download_file_controller = DownloadFileController(file_storage_service)
-delete_file_controller = DeleteFileController(file_storage_service)
-merge_files_controller = MergeFilesController(file_storage_service)
+def get_minio_repository() -> MinioRepository:
+    return minio_repository
