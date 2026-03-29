@@ -26,7 +26,7 @@ id_counter = 0
 files_database = {}
 
 async def introspect(token: str) -> User:
-    url = "http://localhost:8000/introspect"
+    url = "http://localhost:80/introspect"
     headers = {
         "accept": "application/json",
         "auth": token
